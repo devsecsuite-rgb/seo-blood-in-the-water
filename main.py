@@ -18,8 +18,6 @@ from datetime import datetime
 # SECTION 1: CONFIGURATION
 # ============================================================
 
-# Rotate 2 keywords per day to avoid Google rate-limiting.
-# The workflow runs every day; picks 2 from a larger pool.
 KEYWORD_POOL = [
     "workers comp insurance calculator",
     "general liability insurance estimator",
@@ -42,10 +40,12 @@ SEED_KEYWORDS = [
 YOUR_DOMAIN = "calccover.com"
 MIN_SCORE_TO_LOG = 50
 MAX_POSITIONS_TO_CHECK = 10
+MAX_KEYWORDS_PER_RUN = 20
+CRAWLY_DAILY_BUDGET = 90
 
 
 # ============================================================
-# SECTION 2: SERP FETCHING (via OpenSERP running locally)
+# SECTION 2: SERP FETCHING (via Cloudflare Worker)
 # ============================================================
 
 def fetch_serp(keyword, max_retries=3):
@@ -66,7 +66,6 @@ def fetch_serp(keyword, max_retries=3):
                 timeout=120,
             )
 
-            # Cloudflare may return 429 if browser minute budget is exhausted
             if resp.status_code in (429, 503):
                 wait = min(2 ** attempt, 60)
                 print(f"  [RETRY {attempt}/{max_retries}] HTTP {resp.status_code}. Waiting {wait}s...")
@@ -109,7 +108,6 @@ def fetch_serp(keyword, max_retries=3):
 def get_backlink_data(url):
     """
     Query Crawly for a domain's referring domains and authority score.
-    Returns dict: {"referring_domains": int, "harmonic_score": float}
     """
     api_key = os.environ.get("CRAWLY_API_KEY", "")
     if not api_key:
@@ -135,6 +133,9 @@ def get_backlink_data(url):
                 "referring_domains": data.get("summary", {}).get("referring_domains", 999),
                 "harmonic_score": data.get("score", {}).get("harmonic_score", 0),
             }
+        elif resp.status_code == 401:
+            print(f"  [WARN] Crawly 401 (quota or invalid key) for {domain}. Using neutral score.")
+            return {"referring_domains": 50, "harmonic_score": 0.5}
         else:
             print(f"  [WARN] Crawly returned {resp.status_code} for {domain}")
     except Exception as e:
@@ -144,16 +145,12 @@ def get_backlink_data(url):
 
 
 # ============================================================
-# SECTION 4: GSC DATA (your own striking-distance keywords)
+# SECTION 4: GSC DATA
 # ============================================================
 
 def get_gsc_striking_distance():
     """
     Pull queries where YOUR site ranks position 5-20.
-
-    Note: The Search Console API does NOT support filtering by 'position'
-    (only country / device / page / query are valid filter dimensions).
-    We fetch all queries, then filter by average position in Python.
     """
     creds_json = os.environ.get("GSC_SERVICE_ACCOUNT_JSON", "")
     if not creds_json:
@@ -168,7 +165,7 @@ def get_gsc_striking_distance():
         )
         service = build("searchconsole", "v1", credentials=creds)
 
-        # Try both property formats — URL-prefix and domain property
+        # Only use the domain property — URL-prefix returns 403
         site_candidates = ["sc-domain:calccover.com"]
 
         for site_url in site_candidates:
@@ -335,19 +332,18 @@ def log_to_sheet(opportunities):
 def main():
     print(f"[START] Blood in the Water scan - {datetime.now().isoformat()}")
 
-    CRAWLY_DAILY_BUDGET = 90
-    crawly_calls = 0
-
     gsc_kws = get_gsc_striking_distance()
-    all_keywords = list(dict.fromkeys(SEED_KEYWORDS + gsc_kws))
-    print(f"[INFO] Scanning {len(all_keywords)} keywords...")
+    combined = list(dict.fromkeys(SEED_KEYWORDS + gsc_kws))
+    random.shuffle(combined)
+    all_keywords = combined[:MAX_KEYWORDS_PER_RUN]
+    print(f"[INFO] Scanning {len(all_keywords)} of {len(combined)} keywords (rotated)...")
 
     opportunities = []
+    crawly_calls = 0
 
     for i, keyword in enumerate(all_keywords, 1):
         print(f"\n[{i}/{len(all_keywords)}] Scanning: '{keyword}'")
 
-               # Longer pause for Cloudflare Browser Run free tier
         if i > 1:
             pause = random.uniform(15, 25)
             print(f"  [WAIT] Sleeping {pause:.1f}s before next keyword...")
@@ -363,9 +359,9 @@ def main():
             if not url or YOUR_DOMAIN in url:
                 continue
 
-        if crawly_calls < CRAWLY_DAILY_BUDGET:
-            ref = get_backlink_data(url)
-            crawly_calls += 1
+            if crawly_calls < CRAWLY_DAILY_BUDGET:
+                ref = get_backlink_data(url)
+                crawly_calls += 1
             else:
                 ref = {"referring_domains": 50, "harmonic_score": 0.5}
 
