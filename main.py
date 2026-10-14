@@ -344,9 +344,9 @@ def main():
     for i, keyword in enumerate(all_keywords, 1):
         print(f"\n[{i}/{len(all_keywords)}] Scanning: '{keyword}'")
 
-        # Space out keyword-level requests to avoid Google rate-limiting
+               # Longer pause for Cloudflare Browser Run free tier
         if i > 1:
-            pause = random.uniform(8, 15)
+            pause = random.uniform(15, 25)
             print(f"  [WAIT] Sleeping {pause:.1f}s before next keyword...")
             time.sleep(pause)
 
