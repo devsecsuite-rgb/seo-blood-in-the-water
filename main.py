@@ -129,6 +129,10 @@ def get_backlink_data(url):
 def get_gsc_striking_distance():
     """
     Pull queries where YOUR site ranks position 5-20.
+
+    Note: The Search Console API does NOT support filtering by 'position'
+    (only country / device / page / query are valid filter dimensions).
+    We fetch all queries, then filter by average position in Python.
     """
     creds_json = os.environ.get("GSC_SERVICE_ACCOUNT_JSON", "")
     if not creds_json:
@@ -143,26 +147,36 @@ def get_gsc_striking_distance():
         )
         service = build("searchconsole", "v1", credentials=creds)
 
-        site_url = "https://calccover.com/"
-        request = {
-            "startDate": "2026-01-01",
-            "endDate": datetime.now().strftime("%Y-%m-%d"),
-            "dimensions": ["query"],
-            "rowLimit": 100,
-            "dimensionFilterGroups": [{
-                "filters": [{
-                    "dimension": "position",
-                    "operator": "between",
-                    "expression": ["5", "20"],
-                }]
-            }],
-        }
-        response = service.searchanalytics().query(
-            siteUrl=site_url, body=request
-        ).execute()
-        keywords = [row["keys"][0] for row in response.get("rows", [])]
-        print(f"[GSC] Found {len(keywords)} striking-distance keywords.")
-        return keywords
+        # Try both property formats — URL-prefix and domain property
+        site_candidates = ["https://calccover.com/", "sc-domain:calccover.com"]
+
+        for site_url in site_candidates:
+            try:
+                request = {
+                    "startDate": "2026-01-01",
+                    "endDate": datetime.now().strftime("%Y-%m-%d"),
+                    "dimensions": ["query"],
+                    "rowLimit": 5000,   # fetch broadly, filter in Python
+                }
+                response = service.searchanalytics().query(
+                    siteUrl=site_url, body=request
+                ).execute()
+            except Exception as inner:
+                print(f"[WARN] GSC query failed for {site_url}: {inner}")
+                continue
+
+            rows = response.get("rows", [])
+            # Filter: keep queries whose average position is between 5 and 20
+            striking = [
+                row["keys"][0]
+                for row in rows
+                if 5 <= row.get("position", 0) <= 20
+            ]
+            print(f"[GSC] {site_url}: {len(rows)} total, {len(striking)} in position 5-20.")
+            if striking:
+                return striking
+
+        return []
 
     except Exception as e:
         print(f"[ERROR] GSC fetch failed: {e}")
