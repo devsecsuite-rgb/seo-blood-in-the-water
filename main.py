@@ -31,13 +31,309 @@ MAX_POSITIONS_TO_CHECK = 10
 
 
 # ============================================================
-# MAIN (stub)
+# SECTION 2: SERP FETCHING (via OpenSERP running locally)
+# ============================================================
+
+def fetch_serp(keyword):
+    """
+    Fetch top Google results for a keyword from OpenSERP.
+    Assumes OpenSERP is running at http://127.0.0.1:7000.
+    Returns list of dicts with keys: title, url, rank.
+    """
+    url = "http://127.0.0.1:7000/google/search"
+    params = {"text": keyword, "extract": 0}
+
+    try:
+        resp = requests.get(url, params=params, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+
+        results = data.get("results", [])
+        normalized = []
+        for r in results[:MAX_POSITIONS_TO_CHECK]:
+            normalized.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "rank": r.get("rank", r.get("position", 99)),
+            })
+        return normalized
+
+    except Exception as e:
+        print(f"  [ERROR] SERP fetch failed for '{keyword}': {e}")
+        return []
+
+
+# ============================================================
+# SECTION 3: BACKLINK CHECK (via Crawly API)
+# ============================================================
+
+def get_backlink_data(url):
+    """
+    Query Crawly for a domain's referring domains and authority score.
+    Returns dict: {"referring_domains": int, "harmonic_score": float}
+    """
+    api_key = os.environ.get("CRAWLY_API_KEY", "")
+    if not api_key:
+        print("  [WARN] CRAWLY_API_KEY not set. Skipping backlink check.")
+        return {"referring_domains": 999, "harmonic_score": 0}
+
+    try:
+        domain = url.split("//")[1].split("/")[0]
+    except IndexError:
+        domain = url
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    params = {"domain": domain}
+
+    try:
+        resp = requests.get(
+            "https://www.getcrawly.com/api/v1/domain-authority",
+            params=params, headers=headers, timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "referring_domains": data.get("summary", {}).get("referring_domains", 999),
+                "harmonic_score": data.get("score", {}).get("harmonic_score", 0),
+            }
+        else:
+            print(f"  [WARN] Crawly returned {resp.status_code} for {domain}")
+    except Exception as e:
+        print(f"  [ERROR] Crawly request failed for {domain}: {e}")
+
+    return {"referring_domains": 999, "harmonic_score": 0}
+
+
+# ============================================================
+# SECTION 4: GSC DATA (your own striking-distance keywords)
+# ============================================================
+
+def get_gsc_striking_distance():
+    """
+    Pull queries where YOUR site ranks position 5-20.
+    """
+    creds_json = os.environ.get("GSC_SERVICE_ACCOUNT_JSON", "")
+    if not creds_json:
+        print("[WARN] GSC_SERVICE_ACCOUNT_JSON not set. Skipping GSC data.")
+        return []
+
+    try:
+        creds_dict = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/webmasters.readonly"],
+        )
+        service = build("searchconsole", "v1", credentials=creds)
+
+        site_url = "https://calccover.com/"
+        request = {
+            "startDate": "2026-01-01",
+            "endDate": datetime.now().strftime("%Y-%m-%d"),
+            "dimensions": ["query"],
+            "rowLimit": 100,
+            "dimensionFilterGroups": [{
+                "filters": [{
+                    "dimension": "position",
+                    "operator": "between",
+                    "expression": ["5", "20"],
+                }]
+            }],
+        }
+        response = service.searchanalytics().query(
+            siteUrl=site_url, body=request
+        ).execute()
+        keywords = [row["keys"][0] for row in response.get("rows", [])]
+        print(f"[GSC] Found {len(keywords)} striking-distance keywords.")
+        return keywords
+
+    except Exception as e:
+        print(f"[ERROR] GSC fetch failed: {e}")
+        return []
+
+
+# ============================================================
+# SECTION 5: SCORING LOGIC
+# ============================================================
+
+US_STATES = [
+    "california", "texas", "florida", "new york", "illinois",
+    "pennsylvania", "ohio", "georgia", "arizona", "north carolina",
+]
+INDUSTRIES = [
+    "construction", "restaurant", "trucking", "landscaping",
+    "cleaning", "retail", "consulting", "contractor",
+]
+INSURER_DOMAINS = [
+    "geico.com", "statefarm.com", "allstate.com",
+    "progressive.com", "libertymutual.com", "nationwide.com",
+]
+TOOL_INDICATORS = ["calculator", "estimator", "quote", "tool", "calculate"]
+
+
+def score_opportunity(keyword, result, ref_domains, harmonic_score):
+    """Returns (score: int, reasons: list[str])."""
+    score = 0
+    reasons = []
+
+    kw_lower = keyword.lower()
+    title = (result.get("title") or "").lower()
+    url_lower = (result.get("url") or "").lower()
+
+    # Positive factors
+    if ref_domains <= 3:
+        score += 25
+        reasons.append(f"+25: Only {ref_domains} referring domains")
+    elif ref_domains <= 10:
+        score += 15
+        reasons.append(f"+15: Only {ref_domains} referring domains")
+    elif ref_domains <= 30:
+        score += 5
+        reasons.append(f"+5: {ref_domains} referring domains")
+
+    if harmonic_score < 0.3:
+        score += 15
+        reasons.append(f"+15: Low harmonic score ({harmonic_score:.2f})")
+    elif harmonic_score < 0.5:
+        score += 8
+        reasons.append(f"+8: Moderate harmonic score ({harmonic_score:.2f})")
+
+    if any(s in url_lower for s in ["reddit.com", "quora.com", "stackexchange.com", "forum"]):
+        score += 15
+        reasons.append("+15: Forum/UGC content")
+
+    if kw_lower not in title:
+        score += 10
+        reasons.append("+10: Keyword absent from title")
+
+    if not any(i in title for i in TOOL_INDICATORS):
+        score += 12
+        reasons.append("+12: No calculator/tool in title")
+
+    if any(s in kw_lower for s in US_STATES):
+        score += 10
+        reasons.append("+10: State-specific query")
+
+    if any(i in kw_lower for i in INDUSTRIES):
+        score += 8
+        reasons.append("+8: Industry-specific query")
+
+    if any(d in url_lower for d in INSURER_DOMAINS):
+        score += 15
+        reasons.append("+15: Competitor is an insurer, not a calculator")
+
+    if url_lower.endswith(".pdf") or "/wp-content/uploads/" in url_lower:
+        score += 12
+        reasons.append("+12: PDF or outdated resource")
+
+    # Negative factors
+    if any(i in title for i in TOOL_INDICATORS):
+        score -= 10
+        reasons.append("-10: Competitor has calculator/tool")
+
+    if kw_lower in title:
+        score -= 5
+        reasons.append("-5: Keyword in title")
+
+    if ref_domains > 100:
+        score -= 15
+        reasons.append(f"-15: {ref_domains} referring domains (strong)")
+
+    return max(0, min(100, score)), reasons
+
+
+# ============================================================
+# SECTION 6: LOGGING TO GOOGLE SHEETS
+# ============================================================
+
+def log_to_sheet(opportunities):
+    creds_json = os.environ.get("GSC_SERVICE_ACCOUNT_JSON", "")
+    sheet_id = os.environ.get("SHEET_ID", "")
+
+    if not creds_json or not sheet_id:
+        print("[ERROR] Missing GSC_SERVICE_ACCOUNT_JSON or SHEET_ID.")
+        return
+
+    try:
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            json.loads(creds_json), scope
+        )
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(sheet_id).sheet1
+
+        for opp in opportunities:
+            sheet.append_row([
+                opp["score"], opp["keyword"], opp["position"],
+                opp["domain"], opp["url"], opp["ref_domains"],
+                opp["harmonic_score"], opp["intent"], opp["why_weak"],
+                opp["cluster"], datetime.now().strftime("%Y-%m-%d"),
+            ])
+        print(f"  [OK] Logged {len(opportunities)} opportunities.")
+    except Exception as e:
+        print(f"  [ERROR] Sheet logging failed: {e}")
+
+
+# ============================================================
+# MAIN EXECUTION
 # ============================================================
 
 def main():
     print(f"[START] Blood in the Water scan - {datetime.now().isoformat()}")
-    print(f"[INFO] {len(SEED_KEYWORDS)} seed keywords loaded.")
-    print("[STUB] Nothing to do yet.")
+
+    gsc_kws = get_gsc_striking_distance()
+    all_keywords = list(dict.fromkeys(SEED_KEYWORDS + gsc_kws))
+    print(f"[INFO] Scanning {len(all_keywords)} keywords...")
+
+    opportunities = []
+
+    for i, keyword in enumerate(all_keywords, 1):
+        print(f"\n[{i}/{len(all_keywords)}] Scanning: '{keyword}'")
+        results = fetch_serp(keyword)
+        if not results:
+            print("  [SKIP] No results.")
+            continue
+
+        for result in results:
+            url = result.get("url", "")
+            if not url or YOUR_DOMAIN in url:
+                continue
+
+            ref = get_backlink_data(url)
+            score, reasons = score_opportunity(
+                keyword, result,
+                ref["referring_domains"], ref["harmonic_score"],
+            )
+
+            if score >= MIN_SCORE_TO_LOG:
+                opportunities.append({
+                    "score": score,
+                    "keyword": keyword,
+                    "position": result.get("rank", 99),
+                    "domain": url.split("//")[1].split("/")[0] if "//" in url else url,
+                    "url": url,
+                    "ref_domains": ref["referring_domains"],
+                    "harmonic_score": round(ref["harmonic_score"], 3),
+                    "intent": "commercial",
+                    "why_weak": "; ".join(reasons),
+                    "cluster": keyword.split()[0] if keyword else "general",
+                })
+                print(f"  [FOUND] Score {score} - {url}")
+            else:
+                print(f"  [SKIP] Score {score} - {url}")
+
+            time.sleep(0.5)
+
+    opportunities.sort(key=lambda x: x["score"], reverse=True)
+
+    if opportunities:
+        log_to_sheet(opportunities)
+    else:
+        print("\n[INFO] No opportunities met the threshold.")
+
+    print(f"\n[DONE] {len(opportunities)} opportunities found.")
 
 
 if __name__ == "__main__":
