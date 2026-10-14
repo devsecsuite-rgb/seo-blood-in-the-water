@@ -18,12 +18,25 @@ from datetime import datetime
 # SECTION 1: CONFIGURATION
 # ============================================================
 
-SEED_KEYWORDS = [
+# Rotate 2 keywords per day to avoid Google rate-limiting.
+# The workflow runs every day; picks 2 from a larger pool.
+KEYWORD_POOL = [
     "workers comp insurance calculator",
     "general liability insurance estimator",
     "commercial auto insurance quote calculator",
     "business insurance cost calculator",
     "small business liability insurance estimate",
+    "contractor insurance calculator",
+    "restaurant insurance cost estimator",
+    "commercial property insurance calculator",
+]
+
+# Pick 2 keywords per day, rotating by day-of-year
+_day_index = datetime.now().timetuple().tm_yday
+_start = (_day_index * 2) % len(KEYWORD_POOL)
+SEED_KEYWORDS = [
+    KEYWORD_POOL[_start % len(KEYWORD_POOL)],
+    KEYWORD_POOL[(_start + 1) % len(KEYWORD_POOL)],
 ]
 
 YOUR_DOMAIN = "calccover.com"
@@ -52,7 +65,7 @@ def fetch_serp(keyword, max_retries=5):
 
             # Retry on rate-limit / engine busy
             if resp.status_code in (429, 503):
-                wait = min(2 ** attempt, 60)  # 2, 4, 8, 16, 32... capped at 60s
+                wait = min(2 ** attempt, 60)
                 print(f"  [RETRY {attempt}/{max_retries}] HTTP {resp.status_code} for '{keyword}'. Waiting {wait}s...")
                 time.sleep(wait)
                 continue
@@ -157,7 +170,7 @@ def get_gsc_striking_distance():
                     "startDate": "2026-01-01",
                     "endDate": datetime.now().strftime("%Y-%m-%d"),
                     "dimensions": ["query"],
-                    "rowLimit": 5000,   # fetch broadly, filter in Python
+                    "rowLimit": 5000,
                 }
                 response = service.searchanalytics().query(
                     siteUrl=site_url, body=request
@@ -167,7 +180,6 @@ def get_gsc_striking_distance():
                 continue
 
             rows = response.get("rows", [])
-            # Filter: keep queries whose average position is between 5 and 20
             striking = [
                 row["keys"][0]
                 for row in rows
@@ -335,8 +347,6 @@ def main():
         if not results:
             print("  [SKIP] No results.")
             continue
-
-        for result in results:
 
         for result in results:
             url = result.get("url", "")
