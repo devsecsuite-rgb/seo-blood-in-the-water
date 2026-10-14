@@ -6,6 +6,7 @@ Scans Google SERPs for weak competitor pages and logs opportunities.
 import os
 import json
 import time
+import random
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -323,10 +324,19 @@ def main():
 
     for i, keyword in enumerate(all_keywords, 1):
         print(f"\n[{i}/{len(all_keywords)}] Scanning: '{keyword}'")
+
+        # Space out keyword-level requests to avoid Google rate-limiting
+        if i > 1:
+            pause = random.uniform(8, 15)
+            print(f"  [WAIT] Sleeping {pause:.1f}s before next keyword...")
+            time.sleep(pause)
+
         results = fetch_serp(keyword)
         if not results:
             print("  [SKIP] No results.")
             continue
+
+        for result in results:
 
         for result in results:
             url = result.get("url", "")
