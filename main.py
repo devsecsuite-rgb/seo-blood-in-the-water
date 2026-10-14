@@ -123,12 +123,10 @@ def fetch_serp(keyword, max_retries=3):
 
 def get_backlink_data(url):
     """
-    Query Crawly for a domain's referring domains and authority score.
+    Crawly is deprecated for this project (free tier removed).
+    Return neutral values so scoring falls back to heuristics.
     """
-    api_key = os.environ.get("CRAWLY_API_KEY", "")
-    if not api_key:
-        print("  [WARN] CRAWLY_API_KEY not set. Skipping backlink check.")
-        return {"referring_domains": 999, "harmonic_score": 0}
+    return {"referring_domains": 50, "harmonic_score": 0.5}
 
     try:
         domain = url.split("//")[1].split("/")[0]
