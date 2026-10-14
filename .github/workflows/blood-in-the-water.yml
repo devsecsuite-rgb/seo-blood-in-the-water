@@ -25,10 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Blood in the Water scanner
+            - name: Run Blood in the Water scanner
         env:
           CRAWLY_API_KEY: ${{ secrets.CRAWLY_API_KEY }}
           GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
-          SERP_API_URL: ${{ secrets.SERP_API_URL }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
         run: python main.py
