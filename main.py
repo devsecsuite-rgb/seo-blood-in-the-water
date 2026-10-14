@@ -206,13 +206,30 @@ def get_gsc_striking_distance():
                 print(f"[WARN] GSC query failed for {site_url}: {inner}")
                 continue
 
-            rows = response.get("rows", [])
-            striking = [
-                row["keys"][0]
-                for row in rows
-                if 5 <= row.get("position", 0) <= 20
-            ]
-            print(f"[GSC] {site_url}: {len(rows)} total, {len(striking)} in position 5-20.")
+                        rows = response.get("rows", [])
+            striking = []
+            for row in rows:
+                kw = row["keys"][0]
+                pos = row.get("position", 0)
+
+                if not (5 <= pos <= 20):
+                    continue
+                if len(kw) > 80 or kw.count(" ") > 12:
+                    continue
+                if kw.lower().startswith(("how ", "what ", "where ", "why ", "when ", "i am ", "i want ", "i need ")):
+                    continue
+
+                junk_tokens = ["calcover", "calscover", ".net", "/.net", "app restaurant", "salary insurance"]
+                if any(tok in kw.lower() for tok in junk_tokens):
+                    continue
+
+                must_have = ["insurance", "calculator", "estimate", "quote", "cost", "premium"]
+                if not any(m in kw.lower() for m in must_have):
+                    continue
+
+                striking.append(kw)
+
+            print(f"[GSC] {site_url}: {len(rows)} total, {len(striking)} usable (after filters).")
             if striking:
                 return striking
 
