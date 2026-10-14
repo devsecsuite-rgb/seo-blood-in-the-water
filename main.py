@@ -50,55 +50,49 @@ CRAWLY_DAILY_BUDGET = 90
 
 def fetch_serp(keyword, max_retries=3):
     """
-    Fetch top Google results via the Cloudflare Worker SERP API.
-    Reads SERP_API_URL from environment.
+    Fetch top search results via the Brave Search API.
     """
-    base_url = os.environ.get("SERP_API_URL", "")
-    if not base_url:
-        print("  [ERROR] SERP_API_URL not set.")
+    api_key = os.environ.get("BRAVE_API_KEY", "")
+    if not api_key:
+        print("  [ERROR] BRAVE_API_KEY not set.")
         return []
+
+    url = "https://api.search.brave.com/res/v1/web/search"
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": api_key,
+    }
+    params = {
+        "q": keyword,
+        "count": MAX_POSITIONS_TO_CHECK,
+        "country": "us",
+        "search_lang": "en",
+    }
 
     for attempt in range(1, max_retries + 1):
         try:
-            resp = requests.get(
-                base_url,
-                params={"q": keyword},
-                timeout=120,
-            )
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
 
-            if resp.status_code in (429, 503):
+            if resp.status_code == 429:
                 wait = min(2 ** attempt, 60)
-                print(f"  [RETRY {attempt}/{max_retries}] HTTP {resp.status_code}. Waiting {wait}s...")
+                print(f"  [RETRY {attempt}/{max_retries}] HTTP 429 (rate limited). Waiting {wait}s...")
                 time.sleep(wait)
                 continue
 
-            resp.raise_for_status()
-
-            # Debug: show first 300 chars of response
-            body_preview = resp.text[:300]
-            try:
-                data = resp.json()
-            except ValueError:
-                print(f"  [DEBUG] Non-JSON response (HTTP {resp.status_code}): {body_preview}")
-                # If this is a Cloudflare limit or error page, don't retry
-                if "browser" in body_preview.lower() or "limit" in body_preview.lower():
-                    print("  [FATAL] Cloudflare browser limit hit. Stopping scan.")
-                    raise SystemExit(0)
-                wait = min(2 ** attempt, 60)
-                time.sleep(wait)
-                continue
-
-            if "error" in data:
-                print(f"  [ERROR] Worker returned: {data['error']}")
+            if resp.status_code == 401:
+                print("  [FATAL] Brave API key invalid or revoked.")
                 return []
 
-            results = data.get("results", [])
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = data.get("web", {}).get("results", [])
             normalized = []
-            for r in results[:MAX_POSITIONS_TO_CHECK]:
+            for i, item in enumerate(results[:MAX_POSITIONS_TO_CHECK], 1):
                 normalized.append({
-                    "title": r.get("title", ""),
-                    "url": r.get("url", ""),
-                    "rank": r.get("rank", 99),
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "rank": i,
                 })
             return normalized
 
