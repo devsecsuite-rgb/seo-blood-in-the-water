@@ -162,7 +162,7 @@ def get_gsc_striking_distance():
         service = build("searchconsole", "v1", credentials=creds)
 
         # Try both property formats — URL-prefix and domain property
-        site_candidates = ["https://calccover.com/", "sc-domain:calccover.com"]
+        site_candidates = ["sc-domain:calccover.com"]
 
         for site_url in site_candidates:
             try:
