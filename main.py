@@ -335,6 +335,9 @@ def log_to_sheet(opportunities):
 def main():
     print(f"[START] Blood in the Water scan - {datetime.now().isoformat()}")
 
+    CRAWLY_DAILY_BUDGET = 90
+    crawly_calls = 0
+
     gsc_kws = get_gsc_striking_distance()
     all_keywords = list(dict.fromkeys(SEED_KEYWORDS + gsc_kws))
     print(f"[INFO] Scanning {len(all_keywords)} keywords...")
@@ -360,7 +363,12 @@ def main():
             if not url or YOUR_DOMAIN in url:
                 continue
 
+        if crawly_calls < CRAWLY_DAILY_BUDGET:
             ref = get_backlink_data(url)
+            crawly_calls += 1
+            else:
+                ref = {"referring_domains": 50, "harmonic_score": 0.5}
+
             score, reasons = score_opportunity(
                 keyword, result,
                 ref["referring_domains"], ref["harmonic_score"],
