@@ -433,7 +433,7 @@ def main():
                     "harmonic_score": round(ref["harmonic_score"], 3),
                     "intent": "commercial",
                     "why_weak": "; ".join(reasons),
-                    "cluster": keyword.split()[0] if keyword else "general",
+                    "cluster": keyword,
                 })
                 print(f"  [FOUND] Score {score} - {url}")
             else:
