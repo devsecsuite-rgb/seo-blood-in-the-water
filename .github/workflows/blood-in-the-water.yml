@@ -4,12 +4,12 @@ on:
   schedule:
     # Run every day at 06:00 UTC
     - cron: '0 6 * * *'
-  workflow_dispatch:   # allows manual runs from the Actions tab
+  workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -25,32 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Pull OpenSERP Docker image
-        run: docker pull karust/openserp:latest
-
-      - name: Start OpenSERP
-        run: |
-          docker run -d --name openserp -p 7000:7000 \
-            karust/openserp:latest serve -a 0.0.0.0 -p 7000
-          echo "Waiting for OpenSERP to become ready..."
-          for i in $(seq 1 30); do
-            if curl -s "http://127.0.0.1:7000/google/search?text=test" | head -c 50 | grep -q "{"; then
-              echo "OpenSERP is ready after ${i} attempts."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "OpenSERP did not respond in time."
-          docker logs openserp
-          exit 1
-
       - name: Run Blood in the Water scanner
         env:
           CRAWLY_API_KEY: ${{ secrets.CRAWLY_API_KEY }}
           GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          SERP_API_URL: ${{ secrets.SERP_API_URL }}
         run: python main.py
-
-      - name: Stop OpenSERP
-        if: always()
-        run: docker stop openserp || true
