@@ -96,6 +96,22 @@ def fetch_serp(keyword, max_retries=3):
                 })
             return normalized
 
+               except requests.exceptions.HTTPError as e:
+            # Print the actual status code and response body
+            status = e.response.status_code if e.response is not None else "?"
+            body = e.response.text[:300] if e.response is not None else ""
+            print(f"  [HTTP {status}] {body}")
+
+            if status in (401, 403, 422):
+                print(f"  [FATAL] Brave rejected the request. Check API key and plan.")
+                return []
+            if status == 429:
+                wait = min(2 ** attempt, 60)
+                print(f"  [RETRY {attempt}/{max_retries}] Rate limited. Waiting {wait}s...")
+                time.sleep(wait)
+                continue
+            return []
+
         except requests.exceptions.RequestException as e:
             wait = min(2 ** attempt, 60)
             print(f"  [RETRY {attempt}/{max_retries}] {type(e).__name__}. Waiting {wait}s...")
