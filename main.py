@@ -199,25 +199,37 @@ def get_gsc_striking_distance():
                 print(f"[WARN] GSC query failed for {site_url}: {inner}")
                 continue
 
-                        rows = response.get("rows", [])
+            rows = response.get("rows", [])
             striking = []
             for row in rows:
                 kw = row["keys"][0]
                 pos = row.get("position", 0)
 
+                # Must be in striking-distance position
                 if not (5 <= pos <= 20):
                     continue
-                if len(kw) > 80 or kw.count(" ") > 12:
-                    continue
-                if kw.lower().startswith(("how ", "what ", "where ", "why ", "when ", "i am ", "i want ", "i need ")):
+
+                # Skip long AI-prompt style queries
+                if len(kw) > 60 or kw.count(" ") > 8:
                     continue
 
-                junk_tokens = ["calcover", "calscover", ".net", "/.net", "app restaurant", "salary insurance"]
-                if any(tok in kw.lower() for tok in junk_tokens):
+                # Skip questions and first-person queries
+                low = kw.lower()
+                if low.startswith(("how ", "what ", "where ", "why ", "when ",
+                                   "i am ", "i want ", "i need ", "i work ")):
                     continue
 
-                must_have = ["insurance", "calculator", "estimate", "quote", "cost", "premium"]
-                if not any(m in kw.lower() for m in must_have):
+                # Skip brand typos and junk tokens
+                junk = ["calcover", "calscover", ".net", "/.net",
+                        "app restaurant", "salary insurance", "layton ", "carlisle ",
+                        "marquette "]
+                if any(tok in low for tok in junk):
+                    continue
+
+                # Must contain at least one commercial-intent keyword
+                must_have = ["insurance", "calculator", "estimate",
+                             "quote", "cost", "premium", "rate"]
+                if not any(m in low for m in must_have):
                     continue
 
                 striking.append(kw)
@@ -225,7 +237,6 @@ def get_gsc_striking_distance():
             print(f"[GSC] {site_url}: {len(rows)} total, {len(striking)} usable (after filters).")
             if striking:
                 return striking
-
         return []
 
     except Exception as e:
