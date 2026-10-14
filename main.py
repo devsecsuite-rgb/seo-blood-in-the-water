@@ -50,28 +50,31 @@ CRAWLY_DAILY_BUDGET = 90
 
 def fetch_serp(keyword, max_retries=3):
     """
-    Fetch top search results via the Brave Search API.
+    Fetch top Google results via SerpAPI.
+    Free tier: 250 searches/month.
     """
-    api_key = os.environ.get("BRAVE_API_KEY", "")
+    api_key = os.environ.get("SERPAPI_KEY", "")
     if not api_key:
-        print("  [ERROR] BRAVE_API_KEY not set.")
+        print("  [ERROR] SERPAPI_KEY not set.")
         return []
 
-    url = "https://api.search.brave.com/res/v1/web/search"
-    headers = {
-        "Accept": "application/json",
-        "X-Subscription-Token": api_key,
-    }
+    url = "https://serpapi.com/search"
     params = {
+        "engine": "google",
         "q": keyword,
-        "count": MAX_POSITIONS_TO_CHECK,
-        "country": "us",
-        "search_lang": "en",
+        "num": MAX_POSITIONS_TO_CHECK,
+        "gl": "us",
+        "hl": "en",
+        "api_key": api_key,
     }
 
     for attempt in range(1, max_retries + 1):
         try:
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp = requests.get(url, params=params, timeout=60)
+
+            if resp.status_code == 401:
+                print("  [FATAL] SerpAPI key invalid.")
+                return []
 
             if resp.status_code == 429:
                 wait = min(2 ** attempt, 60)
@@ -79,39 +82,29 @@ def fetch_serp(keyword, max_retries=3):
                 time.sleep(wait)
                 continue
 
-            if resp.status_code == 401:
-                print("  [FATAL] Brave API key invalid or revoked.")
-                return []
-
             resp.raise_for_status()
             data = resp.json()
 
-            results = data.get("web", {}).get("results", [])
+            if "error" in data:
+                print(f"  [ERROR] SerpAPI: {data['error']}")
+                return []
+
+            results = data.get("organic_results", [])
             normalized = []
-            for i, item in enumerate(results[:MAX_POSITIONS_TO_CHECK], 1):
+            for item in results[:MAX_POSITIONS_TO_CHECK]:
                 normalized.append({
                     "title": item.get("title", ""),
-                    "url": item.get("url", ""),
-                    "rank": i,
+                    "url": item.get("link", ""),
+                    "rank": item.get("position", 99),
                 })
             return normalized
 
-               except requests.exceptions.HTTPError as e:
-            # Print the actual status code and response body
+        except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else "?"
             body = e.response.text[:300] if e.response is not None else ""
             print(f"  [HTTP {status}] {body}")
-
-            if status in (401, 403, 422):
-                print(f"  [FATAL] Brave rejected the request. Check API key and plan.")
-                return []
-            if status == 429:
-                wait = min(2 ** attempt, 60)
-                print(f"  [RETRY {attempt}/{max_retries}] Rate limited. Waiting {wait}s...")
-                time.sleep(wait)
-                continue
-            return []
-
+            wait = min(2 ** attempt, 60)
+            time.sleep(wait)
         except requests.exceptions.RequestException as e:
             wait = min(2 ** attempt, 60)
             print(f"  [RETRY {attempt}/{max_retries}] {type(e).__name__}. Waiting {wait}s...")
