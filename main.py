@@ -365,17 +365,32 @@ def log_to_sheet(opportunities):
         client = gspread.authorize(creds)
         sheet = client.open_by_key(sheet_id).sheet1
 
+        # Pull existing URLs (column E) so we skip duplicates
+        try:
+            existing_urls = set(sheet.col_values(5))
+        except Exception:
+            existing_urls = set()
+
+        added = 0
+        skipped = 0
+
         for opp in opportunities:
+            if opp["url"] in existing_urls:
+                skipped += 1
+                continue
+
             sheet.append_row([
                 opp["score"], opp["keyword"], opp["position"],
                 opp["domain"], opp["url"], opp["ref_domains"],
                 opp["harmonic_score"], opp["intent"], opp["why_weak"],
                 opp["cluster"], datetime.now().strftime("%Y-%m-%d"),
             ])
-        print(f"  [OK] Logged {len(opportunities)} opportunities.")
+            existing_urls.add(opp["url"])
+            added += 1
+
+        print(f"  [OK] Logged {added} new, skipped {skipped} duplicates.")
     except Exception as e:
         print(f"  [ERROR] Sheet logging failed: {e}")
-
 
 # ============================================================
 # MAIN EXECUTION
