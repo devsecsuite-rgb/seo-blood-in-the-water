@@ -211,11 +211,25 @@ def get_gsc_striking_distance():
                 if len(kw) > 60 or kw.count(" ") > 8:
                     continue
 
-                # Skip questions and first-person queries
+                                # Skip questions, first-person, and preposition-start queries
                 low = kw.lower()
-                if low.startswith(("how ", "what ", "where ", "why ", "when ",
-                                   "i am ", "i want ", "i need ", "i work ")):
+                if low.startswith((
+                    "how ", "what ", "where ", "why ", "when ",
+                    "i am ", "i want ", "i need ", "i work ",
+                    "for ", "of ", "to ", "in ", "on ", "with ", "and ",
+                    "is ", "are ", "can ", "do ", "does ",
+                )):
                     continue
+
+                # Skip queries with 'map' (GIS/ArcGIS noise)
+                if " map" in low or "map " in low:
+                    continue
+
+                # Skip reversals like "insurance restaurant price"
+                if low.startswith(("insurance ", "restaurant insurance ")):
+                    # Only keep if 'cost' or 'quote' or 'calculator' is present
+                    if not any(m in low for m in ["cost", "quote", "calculator", "estimate", "premium"]):
+                        continue
 
                 # Skip brand typos and junk tokens
                 junk = ["calcover", "calscover", ".net", "/.net",
