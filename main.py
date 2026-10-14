@@ -38,7 +38,7 @@ SEED_KEYWORDS = [
 ]
 
 YOUR_DOMAIN = "calccover.com"
-MIN_SCORE_TO_LOG = 50
+MIN_SCORE_TO_LOG = 35
 MAX_POSITIONS_TO_CHECK = 10
 MAX_KEYWORDS_PER_RUN = 5
 CRAWLY_DAILY_BUDGET = 90
@@ -262,7 +262,7 @@ TOOL_INDICATORS = ["calculator", "estimator", "quote", "tool", "calculate"]
 
 
 def score_opportunity(keyword, result, ref_domains, harmonic_score):
-    """Returns (score: int, reasons: list[str])."""
+    """Returns (score: int, reasons: list[str]). Heuristic-only mode."""
     score = 0
     reasons = []
 
@@ -270,67 +270,63 @@ def score_opportunity(keyword, result, ref_domains, harmonic_score):
     title = (result.get("title") or "").lower()
     url_lower = (result.get("url") or "").lower()
 
-    # Positive factors
-    if ref_domains <= 3:
-        score += 25
-        reasons.append(f"+25: Only {ref_domains} referring domains")
-    elif ref_domains <= 10:
-        score += 15
-        reasons.append(f"+15: Only {ref_domains} referring domains")
-    elif ref_domains <= 30:
-        score += 5
-        reasons.append(f"+5: {ref_domains} referring domains")
-
-    if harmonic_score < 0.3:
-        score += 15
-        reasons.append(f"+15: Low harmonic score ({harmonic_score:.2f})")
-    elif harmonic_score < 0.5:
-        score += 8
-        reasons.append(f"+8: Moderate harmonic score ({harmonic_score:.2f})")
-
+    # Forum / UGC content in top 10 — prime "blood in the water" signal
     if any(s in url_lower for s in ["reddit.com", "quora.com", "stackexchange.com", "forum"]):
-        score += 15
-        reasons.append("+15: Forum/UGC content")
+        score += 30
+        reasons.append("+30: Forum/UGC content")
 
+    # Weak title optimization
     if kw_lower not in title:
-        score += 10
-        reasons.append("+10: Keyword absent from title")
+        score += 20
+        reasons.append("+20: Keyword absent from title")
 
+    # No calculator/tool in title — you have one, they don't
     if not any(i in title for i in TOOL_INDICATORS):
-        score += 12
-        reasons.append("+12: No calculator/tool in title")
+        score += 25
+        reasons.append("+25: No calculator/tool in title")
 
-    if any(s in kw_lower for s in US_STATES):
-        score += 10
-        reasons.append("+10: State-specific query")
-
-    if any(i in kw_lower for i in INDUSTRIES):
-        score += 8
-        reasons.append("+8: Industry-specific query")
-
+    # Competitor is a huge insurer, not a calculator site
     if any(d in url_lower for d in INSURER_DOMAINS):
-        score += 15
-        reasons.append("+15: Competitor is an insurer, not a calculator")
+        score += 25
+        reasons.append("+25: Competitor is an insurer, not a calculator")
 
+    # Static resource formats
     if url_lower.endswith(".pdf") or "/wp-content/uploads/" in url_lower:
-        score += 12
-        reasons.append("+12: PDF or outdated resource")
+        score += 20
+        reasons.append("+20: PDF or outdated resource")
+
+    # Blog/article structure instead of tool page
+    if any(tok in url_lower for tok in ["/blog/", "/article/", "/news/", "/resources/", "/guide"]):
+        score += 15
+        reasons.append("+15: Blog/article, not a tool page")
+
+    # State-specific queries = high commercial intent
+    if any(s in kw_lower for s in US_STATES):
+        score += 15
+        reasons.append("+15: State-specific query")
+
+    # Industry-specific queries
+    if any(i in kw_lower for i in INDUSTRIES):
+        score += 10
+        reasons.append("+10: Industry-specific query")
 
     # Negative factors
     if any(i in title for i in TOOL_INDICATORS):
-        score -= 10
-        reasons.append("-10: Competitor has calculator/tool")
+        score -= 20
+        reasons.append("-20: Competitor has calculator/tool")
 
     if kw_lower in title:
-        score -= 5
-        reasons.append("-5: Keyword in title")
+        score -= 10
+        reasons.append("-10: Keyword in title")
 
-    if ref_domains > 100:
-        score -= 15
-        reasons.append(f"-15: {ref_domains} referring domains (strong)")
+    if any(d in url_lower for d in [
+        "geico.com", "statefarm.com", "allstate.com",
+        "progressive.com", "libertymutual.com", "nationwide.com"
+    ]) and not any(i in title for i in TOOL_INDICATORS):
+        # Already scored above; no double-count
+        pass
 
     return max(0, min(100, score)), reasons
-
 
 # ============================================================
 # SECTION 6: LOGGING TO GOOGLE SHEETS
