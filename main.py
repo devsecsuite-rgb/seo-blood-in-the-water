@@ -73,7 +73,20 @@ def fetch_serp(keyword, max_retries=3):
                 continue
 
             resp.raise_for_status()
-            data = resp.json()
+
+            # Debug: show first 300 chars of response
+            body_preview = resp.text[:300]
+            try:
+                data = resp.json()
+            except ValueError:
+                print(f"  [DEBUG] Non-JSON response (HTTP {resp.status_code}): {body_preview}")
+                # If this is a Cloudflare limit or error page, don't retry
+                if "browser" in body_preview.lower() or "limit" in body_preview.lower():
+                    print("  [FATAL] Cloudflare browser limit hit. Stopping scan.")
+                    raise SystemExit(0)
+                wait = min(2 ** attempt, 60)
+                time.sleep(wait)
+                continue
 
             if "error" in data:
                 print(f"  [ERROR] Worker returned: {data['error']}")
