@@ -34,33 +34,51 @@ MAX_POSITIONS_TO_CHECK = 10
 # SECTION 2: SERP FETCHING (via OpenSERP running locally)
 # ============================================================
 
-def fetch_serp(keyword):
+def fetch_serp(keyword, max_retries=5):
     """
     Fetch top Google results for a keyword from OpenSERP.
     Assumes OpenSERP is running at http://127.0.0.1:7000.
+    Retries on 429 (rate-limited) and 503 (engine unavailable) with
+    exponential backoff.
     Returns list of dicts with keys: title, url, rank.
     """
     url = "http://127.0.0.1:7000/google/search"
     params = {"text": keyword, "extract": 0}
 
-    try:
-        resp = requests.get(url, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=120)
 
-        results = data.get("results", [])
-        normalized = []
-        for r in results[:MAX_POSITIONS_TO_CHECK]:
-            normalized.append({
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "rank": r.get("rank", r.get("position", 99)),
-            })
-        return normalized
+            # Retry on rate-limit / engine busy
+            if resp.status_code in (429, 503):
+                wait = min(2 ** attempt, 60)  # 2, 4, 8, 16, 32... capped at 60s
+                print(f"  [RETRY {attempt}/{max_retries}] HTTP {resp.status_code} for '{keyword}'. Waiting {wait}s...")
+                time.sleep(wait)
+                continue
 
-    except Exception as e:
-        print(f"  [ERROR] SERP fetch failed for '{keyword}': {e}")
-        return []
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = data.get("results", [])
+            normalized = []
+            for r in results[:MAX_POSITIONS_TO_CHECK]:
+                normalized.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "rank": r.get("rank", r.get("position", 99)),
+                })
+            return normalized
+
+        except requests.exceptions.RequestException as e:
+            wait = min(2 ** attempt, 60)
+            print(f"  [RETRY {attempt}/{max_retries}] {type(e).__name__}: {e}. Waiting {wait}s...")
+            time.sleep(wait)
+        except Exception as e:
+            print(f"  [ERROR] SERP fetch failed for '{keyword}': {e}")
+            return []
+
+    print(f"  [FAIL] Gave up on '{keyword}' after {max_retries} attempts.")
+    return []
 
 
 # ============================================================
